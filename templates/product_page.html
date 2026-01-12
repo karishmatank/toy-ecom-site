@@ -8,4 +8,15 @@
     <input name="quantity" type="number" step="1" value="1">
     <button type="submit">Add to Cart</button>
   </form>
+  {% if inventory[item_id]['available'] < 4 %}
+    <p class="low-inventory"><em>Hurry! Only {{ inventory[item_id]['available'] }} remaining!</em></p>
+  {% endif %}
+  <section class="margin-on-top">
+    <div>
+      <a href="{{ url_for('view_cart') }}">View Your Cart</a>
+    </div>
+    <div>
+      <a href="{{ url_for('index') }}">View Selection</a>
+    </div>
+  </section>
 {% endblock %}

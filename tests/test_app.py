@@ -147,7 +147,42 @@ class RoutesTest(unittest.TestCase):
         body = response.get_data(as_text=True)
         self.assertIn('White T-Shirt', body)
         self.assertIn('Quantity 1', body)
+    
+    def test_clear_cart(self):
+        """Test clear cart functionality"""
+        self.client = self._create_session_with_cart({
+            '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+        })
 
+        item_id = '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3'
+        response = self.client.post(f"/cart/{item_id}/delete", follow_redirects=True)
+        body = response.get_data(as_text=True)
+
+        self.assertIn("Item removed from cart", body)
+
+    def test_clear_cart_nonexistent_id(self):
+        """Test clear cart functionality if item ID doesn't exist"""
+        self.client = self._create_session_with_cart({
+            '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+        })
+
+        item_id = "1"
+        response = self.client.post(f"/cart/{item_id}/delete", follow_redirects=True)
+        body = response.get_data(as_text=True)
+
+        self.assertIn("Item does not exist.", body)
+
+    def test_clear_cart_item_not_in_cart(self):
+        """Test clear cart functionality for valid ID but item not in cart"""
+        self.client = self._create_session_with_cart({
+            '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+        })
+
+        item_id = "1eb43f24-b5c9-4d60-ae93-1d13912669c2"
+        response = self.client.post(f"/cart/{item_id}/delete", follow_redirects=True)
+        body = response.get_data(as_text=True)
+
+        self.assertIn("Item is not in cart.", body)
 
 if __name__ == "__main__":
     unittest.main()

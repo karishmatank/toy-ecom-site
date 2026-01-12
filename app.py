@@ -82,11 +82,30 @@ def add_product_to_cart(item_id):
     session['cart'][item_id] = session['cart'].get(item_id, 0) + quantity
     
     flash("Added to cart!", "success")
+    session.modified = True
     return render_template('product_page.html', item_id=item_id)
 
 @app.route('/cart')
 def view_cart():
     return render_template('cart.html')
+
+@app.route('/cart/<item_id>/delete', methods=['POST'])
+def delete_item_from_cart(item_id):
+    if not is_item_in_inventory(item_id):
+        flash("Item does not exist.", "warning")
+        return redirect(url_for("index"))
+    
+    # Check that item is actually in the cart
+    if not item_id in session['cart']:
+        flash("Item is not in cart.", "warning")
+        return redirect(url_for('view_cart'))
+
+    # Remove item from cart
+    del session['cart'][item_id]
+
+    flash("Item removed from cart", "success")
+    session.modified = True
+    return redirect(url_for('view_cart'))
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

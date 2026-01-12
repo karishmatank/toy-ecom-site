@@ -9,6 +9,22 @@ body {
   background: #CBE5F2;
 }
 
+.low-inventory {
+  color: #ff6633;
+}
+
+.margin-to-left {
+  margin-left: 15px;
+}
+
+.margin-on-top {
+  margin-top: 20px;
+}
+
+.inline {
+  display: inline;
+}
+
 .success {
   color: #33cc99;
   background: #CBF2E5;

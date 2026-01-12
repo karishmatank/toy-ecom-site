@@ -6,13 +6,18 @@
     {% if session['cart'] %}
       {% for item_id in session['cart'] %}
         <li>
-          <a href="{{ url_for('view_product', item_id=item_id)}}">
-            {{ inventory[item_id]['product_name'] }}: Quantity {{ session['cart'][item_id] }}
-          </a>
+          <a href="{{ url_for('view_product', item_id=item_id)}}">{{ inventory[item_id]['product_name'] }}</a>
+          <p class="inline margin-to-left">Quantity {{ session['cart'][item_id] }}</p>
+          <form class="inline margin-to-left" method="post" action="{{ url_for('delete_item_from_cart', item_id=item_id) }}">
+            <button type="submit">Clear Item from Cart</button>
+          </form>
         </li>
       {% endfor %}
     {% else %}
       <p>You have no items in your cart!</p>
     {% endif %}
   </ul>
+  <section class="margin-on-top">
+    <a href="{{ url_for('index') }}">View Selection</a>
+  </section>
 {% endblock %}
