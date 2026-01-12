@@ -1,0 +1,18 @@
+{% extends 'layout.html' %}
+
+{% block content %}
+  <h1>Your Cart:</h1>
+  <ul>
+    {% if session['cart'] %}
+      {% for item_id in session['cart'] %}
+        <li>
+          <a href="{{ url_for('view_product', item_id=item_id)}}">
+            {{ inventory[item_id]['product_name'] }}: Quantity {{ session['cart'][item_id] }}
+          </a>
+        </li>
+      {% endfor %}
+    {% else %}
+      <p>You have no items in your cart!</p>
+    {% endif %}
+  </ul>
+{% endblock %}

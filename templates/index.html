@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+
+{% block content %}
+  <h1>Welcome to the Toy Ecom Shop!</h1>
+  <p>Please browse our products below:</p>
+  <ul>
+    {% for item_id in inventory %}
+      <li>
+        <a href="{{ url_for('view_product', item_id=item_id)}}">{{ inventory[item_id]['product_name'] }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+  <section>
+    <a href="{{ url_for('view_cart') }}">View Your Cart</a>
+  </section>
+{% endblock %}

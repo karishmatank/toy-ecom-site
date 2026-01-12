@@ -1,0 +1,20 @@
+body {
+  padding: 1em;
+  font-family: sans-serif;
+}
+
+.flash-msg {
+  padding: 10px;
+  color: #3399cc;
+  background: #CBE5F2;
+}
+
+.success {
+  color: #33cc99;
+  background: #CBF2E5;
+}
+
+.warning {
+  color: #ff6633;
+  background: #FFCFBF;
+}

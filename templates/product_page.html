@@ -1,0 +1,11 @@
+{% extends "layout.html" %}
+
+{% block content %}
+  <h1>{{ inventory[item_id]['product_name'] }}</h1>
+  <p>{{ inventory[item_id]['description'] }}</p>
+  <form method="post" action="{{ url_for('add_product_to_cart', item_id=item_id) }}">
+    <label for="quantity">Quantity:</label>
+    <input name="quantity" type="number" step="1" value="1">
+    <button type="submit">Add to Cart</button>
+  </form>
+{% endblock %}
