@@ -1,0 +1,1 @@
+Toy ecommerce apparel site to practice creating Flask apps, namely working with session data, validations, and tests.

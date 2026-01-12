@@ -1,0 +1,16 @@
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments, if any
+.venv/
+venv/
+
+# OS-specific files
+.DS_Store
+
+# Editor/IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
