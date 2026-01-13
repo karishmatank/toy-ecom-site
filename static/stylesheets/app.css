@@ -25,6 +25,10 @@ body {
   display: inline;
 }
 
+.block {
+  display: block;
+}
+
 .success {
   color: #33cc99;
   background: #CBF2E5;

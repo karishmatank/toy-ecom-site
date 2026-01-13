@@ -17,7 +17,22 @@
       <p>You have no items in your cart!</p>
     {% endif %}
   </ul>
-  <section class="margin-on-top">
-    <a href="{{ url_for('index') }}">View Selection</a>
-  </section>
+  {% if session['cart'] %}
+    <form method="post", action="{{ url_for('check_out_cart') }}">
+      <button type="submit">Check Out</button>
+    </form>
+  {% endif %}
+{% endblock %}
+
+{% block additional_links %}
+  <a class="block" href="{{ url_for('index') }}">View Selection</a>
+  {% if not session['username'] %}
+    <a class="block" href="{{ url_for('sign_up') }}">Sign Up for a Free Account</a>
+    <a class="block" href="{{ url_for('sign_in') }}">Sign In</a>
+  {% else %}
+    <a class="block" href="{{ url_for('user_history') }}">See Purchase History</a>
+    <form class="block" method="post" action="{{ url_for('sign_out') }}">
+      <button type="submit">Sign Out</button>
+    </form>
+  {% endif %}
 {% endblock %}

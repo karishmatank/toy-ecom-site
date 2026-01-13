@@ -1,8 +1,8 @@
-4931f25f-ff1c-4d49-b1d1-15c78bcc92d3: 
-  product_name: "White T-Shirt"
-  description: "Classic white t-shirt, goes with every outfit."
-  available: 10
 1eb43f24-b5c9-4d60-ae93-1d13912669c2:
-  product_name: "Black Jeans"
-  description: "Durable jeans!"
-  available: 2
+  available: 1
+  description: Durable jeans!
+  product_name: Black Jeans
+4931f25f-ff1c-4d49-b1d1-15c78bcc92d3:
+  available: 9
+  description: Classic white t-shirt, goes with every outfit.
+  product_name: White T-Shirt

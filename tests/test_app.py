@@ -23,15 +23,57 @@ class RoutesTest(unittest.TestCase):
                     "available": 2
                 },
             }, file)
+        
+        # Create a users yaml file
+        self.users_path = os.path.join(os.path.dirname(__file__), 'users.yml')
+        with open(self.users_path, 'w') as file:
+            yaml.safe_dump({
+                'admin': '$2b$12$ugokt6qiEsW28czTnPB6j.3x9/cZrZLsyTUW5qyxykp0JoW3uzIDu'
+            }, file)
+
+        # Create a purchases yaml file
+        self.purchases_path = os.path.join(os.path.dirname(__file__), 'purchases.yml')
+        with open(self.purchases_path, 'w') as file:
+            yaml.safe_dump({
+                'e3cfe3dd-62ef-4bdd-b307-4d982ba0e2b5': {
+                    'user': 'admin',
+                    'items': {
+                        '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+                    },
+                    'date': '2026-01-12'
+                },
+                '5d39b0c0-4cee-464d-81fb-fc9787ceefcb': {
+                    'user': 'other-user',
+                    'items': {
+                        '1eb43f24-b5c9-4d60-ae93-1d13912669c2': 1
+                    },
+                    'date': '2026-01-11'
+                }
+            }, file)
     
     def tearDown(self):
         os.remove(self.inventory_path)
+        os.remove(self.users_path)
 
     def _create_session_with_cart(self, items={}):
         with self.client as c:
             with c.session_transaction() as session:
                 session['cart'] = items
             return c
+        
+    def _sign_in(self):
+        with self.client as c:
+            with c.session_transaction() as session:
+                session['username'] = 'admin'
+            return c
+        
+    def _get_current_inventory(self):
+        with open(self.inventory_path, 'r') as file:
+            return yaml.safe_load(file)
+        
+    def _get_purchase_history(self):
+        with open(self.purchases_path, 'r') as file:
+            return yaml.safe_load(file)
 
     def test_index(self):
         """Test index route (/)"""
@@ -183,6 +225,113 @@ class RoutesTest(unittest.TestCase):
         body = response.get_data(as_text=True)
 
         self.assertIn("Item is not in cart.", body)
+
+    def test_sign_up(self):
+        """Test sign up capability"""
+        data = {'username': 'new_user', 'password': 'new_password'}
+        response = self.client.post('/users/sign-up', data=data, follow_redirects=True)
+        body = response.get_data(as_text=True)
+        self.assertIn("Sign up successful! Please log in.", body)
+
+    def test_sign_up_existing_user(self):
+        """Test sign up with existing username"""
+        data = {'username': 'admin', 'password': 'new_password'}
+        response = self.client.post('/users/sign-up', data=data, follow_redirects=True)
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Username already exists.", body)
+    
+    def test_sign_up_missing_info(self):
+        """Test sign up with missing info (missing username and/or password)"""
+        data = {'username': ' ', 'password': 'new_password'}
+        response = self.client.post('/users/sign-up', data=data, follow_redirects=True)
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Please provide a username and password.", body)
+
+        data = {'username': 'new_user', 'password': ' '}
+        response = self.client.post('/users/sign-up', data=data, follow_redirects=True)
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("Please provide a username and password.", body)
+    
+    def test_sign_in(self):
+        """Test sign in capability"""
+        data = {'username': 'admin', 'password': 'secret'}
+        response = self.client.post("/users/sign-in", data=data, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Welcome', response.get_data(as_text=True))
+
+    def test_sign_in_incorrect_credentials(self):
+        """Test sign in with incorrect credentials"""
+        data = {'username': 'admin', 'password': 'password'}
+        response = self.client.post("/users/sign-in", data=data, follow_redirects=True)
+        self.assertEqual(response.status_code, 422)
+        self.assertIn('Invalid credentials', response.get_data(as_text=True))
+
+    def test_sign_out(self):
+        self.client = self._sign_in()
+
+        with self.client.session_transaction() as session:
+            self.assertEqual(session['username'], 'admin')
+
+        response = self.client.post("/users/sign-out", follow_redirects=True)
+
+        self.assertIn("You have been signed out.", response.get_data(as_text=True))
+
+        with self.client.session_transaction() as session:
+            self.assertNotIn('username', session)
+
+    def test_check_out(self):
+        self.client = self._sign_in()
+        self.client = self._create_session_with_cart({
+            '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+        })
+
+        # Check inventory file before we do anything
+        current_inventory = self._get_current_inventory()
+        item_id = '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3'
+        self.assertEqual(current_inventory[item_id]['available'], 10)
+
+        response = self.client.post("/users/check-out", follow_redirects=True)
+        self.assertIn('Thank you for your purchase!', response.get_data(as_text=True))
+
+        # Check inventory file afterwards
+        new_inventory = self._get_current_inventory()
+        self.assertEqual(new_inventory[item_id]['available'], 9)
+
+        # Check session cart is empty
+        with self.client.session_transaction() as session:
+            self.assertEqual(session['cart'], {})
+
+        # Check that there are 3 purchases in the purchase history file (there were 2 to start)
+        purchases = self._get_purchase_history()
+        self.assertEqual(len(purchases), 3)
+
+    def test_check_out_empty_cart(self):
+        """Test that checkout doesn't go through with an empty cart"""
+        self.client = self._sign_in()
+        self.client = self._create_session_with_cart()
+
+        response = self.client.post("/users/check-out", follow_redirects=True)
+        self.assertIn('No items to check out!', response.get_data(as_text=True))
+
+    def test_purchase_history(self):
+        """Test that purchase history page populates correctly"""
+        self.client = self._sign_in()
+
+        response = self.client.get("/users/history")
+        body = response.get_data(as_text=True)
+        self.assertIn('White T-Shirt', body)
+        self.assertIn('Quantity 1', body)
+        self.assertIn('Confirmation number: e3cfe3dd-62ef-4bdd-b307-4d982ba0e2b5', body)
+        self.assertIn('Purchase date: 2026-01-12', body)
+
+        # Confirm the other fake user's purchase is not shown
+        self.assertNotIn('Black Jeans', body)
+        self.assertNotIn('Confirmation number: 5d39b0c0-4cee-464d-81fb-fc9787ceefcb', body)
+        self.assertNotIn('Purchase date: 2026-01-11', body)
+
 
 if __name__ == "__main__":
     unittest.main()

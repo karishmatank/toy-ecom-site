@@ -3,20 +3,30 @@
 {% block content %}
   <h1>{{ inventory[item_id]['product_name'] }}</h1>
   <p>{{ inventory[item_id]['description'] }}</p>
-  <form method="post" action="{{ url_for('add_product_to_cart', item_id=item_id) }}">
-    <label for="quantity">Quantity:</label>
-    <input name="quantity" type="number" step="1" value="1">
-    <button type="submit">Add to Cart</button>
-  </form>
-  {% if inventory[item_id]['available'] < 4 %}
+  {% if inventory[item_id]['available'] > 0 %}
+    <form method="post" action="{{ url_for('add_product_to_cart', item_id=item_id) }}">
+      <label for="quantity">Quantity:</label>
+      <input name="quantity" type="number" step="1" value="1">
+      <button type="submit">Add to Cart</button>
+    </form>
+  {% endif %}
+  {% if inventory[item_id]['available'] == 0 %}
+    <p class="low-inventory"><strong>SOLD OUT</strong></p>
+  {% elif inventory[item_id]['available'] < 4 %}
     <p class="low-inventory"><em>Hurry! Only {{ inventory[item_id]['available'] }} remaining!</em></p>
   {% endif %}
-  <section class="margin-on-top">
-    <div>
-      <a href="{{ url_for('view_cart') }}">View Your Cart</a>
-    </div>
-    <div>
-      <a href="{{ url_for('index') }}">View Selection</a>
-    </div>
-  </section>
+{% endblock %}
+
+{% block additional_links %}
+  <a class="block" href="{{ url_for('view_cart') }}">View Your Cart</a>
+  <a class="block" href="{{ url_for('index') }}">View Selection</a>
+  {% if not session['username'] %}
+    <a class="block" href="{{ url_for('sign_up') }}">Sign Up for a Free Account</a>
+    <a class="block" href="{{ url_for('sign_in') }}">Sign In</a>
+  {% else %}
+    <a class="block" href="{{ url_for('user_history') }}">See Purchase History</a>
+    <form class="block" method="post" action="{{ url_for('sign_out') }}">
+      <button type="submit">Sign Out</button>
+    </form>
+  {% endif %}
 {% endblock %}
