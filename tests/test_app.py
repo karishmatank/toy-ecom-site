@@ -54,6 +54,7 @@ class RoutesTest(unittest.TestCase):
     def tearDown(self):
         os.remove(self.inventory_path)
         os.remove(self.users_path)
+        os.remove(self.inventory_path)
 
     def _create_session_with_cart(self, items={}):
         with self.client as c:
