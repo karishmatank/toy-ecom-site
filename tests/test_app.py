@@ -1,60 +1,41 @@
 import unittest
 from app import app
+import psycopg2
+from contextlib import contextmanager
 import os
-import yaml
 
 class RoutesTest(unittest.TestCase):
     def setUp(self):
         app.config['TESTING'] = True
         self.client = app.test_client()
 
-        # Create an inventory yaml file
-        self.inventory_path = os.path.join(os.path.dirname(__file__), 'inventory.yml')
-        with open(self.inventory_path, 'w') as file:
-            yaml.safe_dump({
-                "4931f25f-ff1c-4d49-b1d1-15c78bcc92d3": {
-                    "product_name": "White T-Shirt",
-                    "description": "Classic white t-shirt, goes with every outfit.",
-                    "available": 10
-                },
-                "1eb43f24-b5c9-4d60-ae93-1d13912669c2": {
-                    "product_name": "Black Jeans",
-                    "description": "Durable jeans!",
-                    "available": 2
-                },
-            }, file)
-        
-        # Create a users yaml file
-        self.users_path = os.path.join(os.path.dirname(__file__), 'users.yml')
-        with open(self.users_path, 'w') as file:
-            yaml.safe_dump({
-                'admin': '$2b$12$ugokt6qiEsW28czTnPB6j.3x9/cZrZLsyTUW5qyxykp0JoW3uzIDu'
-            }, file)
-
-        # Create a purchases yaml file
-        self.purchases_path = os.path.join(os.path.dirname(__file__), 'purchases.yml')
-        with open(self.purchases_path, 'w') as file:
-            yaml.safe_dump({
-                'e3cfe3dd-62ef-4bdd-b307-4d982ba0e2b5': {
-                    'user': 'admin',
-                    'items': {
-                        '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
-                    },
-                    'date': '2026-01-12'
-                },
-                '5d39b0c0-4cee-464d-81fb-fc9787ceefcb': {
-                    'user': 'other-user',
-                    'items': {
-                        '1eb43f24-b5c9-4d60-ae93-1d13912669c2': 1
-                    },
-                    'date': '2026-01-11'
-                }
-            }, file)
+        self.sql_path = os.path.join(os.path.dirname(__file__), '..', 'schema.sql')
+        with self._database_connect() as connection:
+            with connection.cursor() as cursor:
+                with open(self.sql_path, "r") as f:
+                    cursor.execute(f.read())
     
     def tearDown(self):
-        os.remove(self.inventory_path)
-        os.remove(self.users_path)
-        os.remove(self.inventory_path)
+        with self._database_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    DROP TABLE IF EXISTS 
+                        users, 
+                        inventory, 
+                        orders, 
+                        order_items, 
+                        shopping_carts, 
+                        cart_items;
+                    """)
+        
+    @contextmanager
+    def _database_connect(self):
+        connection = psycopg2.connect(dbname='toy_ecomm_test')
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _create_session_with_cart(self, items={}):
         with self.client as c:
@@ -62,19 +43,54 @@ class RoutesTest(unittest.TestCase):
                 session['cart'] = items
             return c
         
+    def _create_db_cart(self, items={}):
+        if not items:
+            return
+        user_id = 1
+        placeholders = ", ".join(["(%s, %s, %s)" for _ in items])
+        values = tuple(i for item_id, quantity in items.items() for i in (user_id, item_id, quantity))
+        query = f"""
+            INSERT INTO cart_items (cart_id, item_id, quantity) VALUES {placeholders}
+        """
+
+        with self._database_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, values)    
+
+    def _get_cart_count(self, user_id):
+        with self._database_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT count(*)
+                    FROM cart_items
+                    WHERE cart_id = %s;
+                """, (user_id,))
+                return cursor.fetchone()[0]
+        
     def _sign_in(self):
         with self.client as c:
             with c.session_transaction() as session:
-                session['username'] = 'admin'
+                session['id'] = 1
             return c
         
-    def _get_current_inventory(self):
-        with open(self.inventory_path, 'r') as file:
-            return yaml.safe_load(file)
+    def _get_current_inventory(self, item_id):        
+        with self._database_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT available
+                    FROM inventory
+                    WHERE id = %s;
+                """, (item_id,))
+                return cursor.fetchone()[0]
         
     def _get_purchase_history(self):
-        with open(self.purchases_path, 'r') as file:
-            return yaml.safe_load(file)
+        with self._database_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT count(id)
+                    FROM orders;
+                """)
+                return cursor.fetchone()[0]
 
     def test_index(self):
         """Test index route (/)"""
@@ -88,7 +104,7 @@ class RoutesTest(unittest.TestCase):
 
     def test_item_page(self):
         """Test item page"""
-        response = self.client.get("/item/4931f25f-ff1c-4d49-b1d1-15c78bcc92d3")
+        response = self.client.get("/item/2")
         body = response.get_data(as_text=True)
 
         self.assertEqual(response.status_code, 200)
@@ -97,7 +113,7 @@ class RoutesTest(unittest.TestCase):
 
     def test_item_page_nonexistent(self):
         """Test item page with nonexistent ID"""
-        with self.client.get("/item/1") as response:
+        with self.client.get("/item/99") as response:
             self.assertEqual(response.status_code, 302)
             redirect_location = response.headers['Location']
 
@@ -108,7 +124,7 @@ class RoutesTest(unittest.TestCase):
         """Test add to cart functionality"""
         self.client = self._create_session_with_cart()
 
-        item_id = "4931f25f-ff1c-4d49-b1d1-15c78bcc92d3"
+        item_id = 2
         data = {'quantity': "1"}
         response = self.client.post(
             f"/item/{item_id}/add-to-cart", 
@@ -119,15 +135,17 @@ class RoutesTest(unittest.TestCase):
         body = response.get_data(as_text=True)
         self.assertIn('Added to cart!', body)
 
+        # With Flask, session data is serialized, meaning the item_id is kept as a string, not int in the session data
+        # So we have to cast it to str to check below
         with self.client.session_transaction() as session:
-            self.assertEqual(session['cart'][item_id], 1)
+            self.assertEqual(session['cart'][str(item_id)], 1)
 
     def test_add_to_cart_invalid_quantity(self):
         """Test add to cart with a quantity too large and too small"""
         # Too large
         self.client = self._create_session_with_cart()
 
-        item_id = "1eb43f24-b5c9-4d60-ae93-1d13912669c2"
+        item_id = 1
         data = {'quantity': "3"}
         response = self.client.post(
             f"/item/{item_id}/add-to-cart", 
@@ -159,7 +177,7 @@ class RoutesTest(unittest.TestCase):
         """Test add to cart with invalid product ID"""
         self.client = self._create_session_with_cart()
 
-        item_id = "1"
+        item_id = 99
         data = {'quantity': "3"}
         response = self.client.post(
             f"/item/{item_id}/add-to-cart", 
@@ -174,6 +192,56 @@ class RoutesTest(unittest.TestCase):
         with self.client.session_transaction() as session:
             self.assertNotIn(item_id, session['cart'])
 
+    def test_add_to_cart_existing_cart_no_login(self):
+        """Tests add to cart functionality when there is an existing cart item (not logged in)"""
+        self.client = self._create_session_with_cart({
+            2: 1
+        })
+
+        item_id = 2
+        data = {'quantity': "3"}
+        response = self.client.post(
+            f"/item/{item_id}/add-to-cart", 
+            data=data, 
+            follow_redirects=True
+        )
+
+        body = response.get_data(as_text=True)
+        self.assertIn('Added to cart!', body)
+
+        # With Flask, session data is serialized, meaning the item_id is kept as a string, not int in the session data
+        # So we have to cast it to str to check below
+        with self.client.session_transaction() as session:
+            self.assertEqual(session['cart'][str(item_id)], 4)
+    
+    def test_add_to_cart_existing_cart_login(self):
+        """Tests add to cart functionality when there is an existing cart item (logged in)"""
+        self.client = self._sign_in()
+        self._create_db_cart({
+            2: 1
+        })
+
+        item_id = 2
+        data = {'quantity': "3"}
+        response = self.client.post(
+            f"/item/{item_id}/add-to-cart", 
+            data=data, 
+            follow_redirects=True
+        )
+
+        body = response.get_data(as_text=True)
+        self.assertIn('Added to cart!', body)
+
+        with self._database_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT quantity
+                    FROM cart_items
+                    WHERE cart_id = 1 AND
+                    item_id = %s;
+                """, (item_id,))
+                self.assertEqual(cursor.fetchone()[0], 4)
+
     def test_view_cart(self):
         """Test view cart"""
         # No cart
@@ -184,32 +252,92 @@ class RoutesTest(unittest.TestCase):
 
         # Items in cart
         self.client = self._create_session_with_cart({
-            '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+            2: 1
         })
         response = self.client.get("/cart")
         body = response.get_data(as_text=True)
         self.assertIn('White T-Shirt', body)
         self.assertIn('Quantity 1', body)
-    
+
+    def test_view_cart_signed_in(self):
+        """Test view cart when user is signed in"""
+        # No cart
+        self.client = self._sign_in()
+        self._create_db_cart()
+        response = self.client.get("/cart")
+        body = response.get_data(as_text=True)
+        self.assertIn('You have no items in your cart!', body)
+
+        # Items in cart
+        self._create_db_cart({
+            2: 1
+        })
+        response = self.client.get("/cart")
+        body = response.get_data(as_text=True)
+        self.assertIn('White T-Shirt', body)
+        self.assertIn('Quantity 1', body)
+
     def test_clear_cart(self):
         """Test clear cart functionality"""
         self.client = self._create_session_with_cart({
-            '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+            2: 1
         })
 
-        item_id = '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3'
+        item_id = 2
         response = self.client.post(f"/cart/{item_id}/delete", follow_redirects=True)
         body = response.get_data(as_text=True)
 
         self.assertIn("Item removed from cart", body)
 
+    def test_clear_cart_signed_in(self):
+        """Test clear cart functionality when signed in"""
+        self.client = self._sign_in()
+        self._create_db_cart({
+            2: 1
+        })
+
+        item_id = 2
+        response = self.client.post(f"/cart/{item_id}/delete", follow_redirects=True)
+        body = response.get_data(as_text=True)
+
+        self.assertIn("Item removed from cart", body)
+
+        # Check that the item cleared from the cart
+        with self._database_connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT count(*)
+                    FROM cart_items
+                    WHERE cart_id = 1 AND
+                    item_id = %s;
+                """, (item_id,))
+                self.assertEqual(cursor.fetchone()[0], 0)
+
+    def test_session_cart_emptied_on_sign_in(self):
+        """Test that the session cart is deleted after a user signs in"""
+        cart = {2: 1}
+        self.client = self._create_session_with_cart(cart)
+
+        # Sign in
+        data = {'username': 'admin', 'password': 'secret'}
+        response = self.client.post("/users/sign-in", data=data, follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+
+        # Check if session cart is cleared
+        with self.client.session_transaction() as session:
+            self.assertFalse('cart' in session)
+
+        # Check if cart in the database now
+        cart_count = self._get_cart_count(user_id=1)
+        self.assertEqual(cart_count, 1)
+
     def test_clear_cart_nonexistent_id(self):
         """Test clear cart functionality if item ID doesn't exist"""
         self.client = self._create_session_with_cart({
-            '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+            2: 1
         })
 
-        item_id = "1"
+        item_id = 99
         response = self.client.post(f"/cart/{item_id}/delete", follow_redirects=True)
         body = response.get_data(as_text=True)
 
@@ -218,10 +346,10 @@ class RoutesTest(unittest.TestCase):
     def test_clear_cart_item_not_in_cart(self):
         """Test clear cart functionality for valid ID but item not in cart"""
         self.client = self._create_session_with_cart({
-            '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+            2: 1
         })
 
-        item_id = "1eb43f24-b5c9-4d60-ae93-1d13912669c2"
+        item_id = 1
         response = self.client.post(f"/cart/{item_id}/delete", follow_redirects=True)
         body = response.get_data(as_text=True)
 
@@ -274,45 +402,45 @@ class RoutesTest(unittest.TestCase):
         self.client = self._sign_in()
 
         with self.client.session_transaction() as session:
-            self.assertEqual(session['username'], 'admin')
+            self.assertEqual(session['id'], 1)
 
         response = self.client.post("/users/sign-out", follow_redirects=True)
 
         self.assertIn("You have been signed out.", response.get_data(as_text=True))
 
         with self.client.session_transaction() as session:
-            self.assertNotIn('username', session)
+            self.assertNotIn('id', session)
 
     def test_check_out(self):
         self.client = self._sign_in()
-        self.client = self._create_session_with_cart({
-            '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3': 1
+        self._create_db_cart({
+            2: 1
         })
 
         # Check inventory file before we do anything
-        current_inventory = self._get_current_inventory()
-        item_id = '4931f25f-ff1c-4d49-b1d1-15c78bcc92d3'
-        self.assertEqual(current_inventory[item_id]['available'], 10)
+        item_id = 2
+        current_inventory = self._get_current_inventory(item_id)
+        self.assertEqual(current_inventory, 10)
 
         response = self.client.post("/users/check-out", follow_redirects=True)
         self.assertIn('Thank you for your purchase!', response.get_data(as_text=True))
 
         # Check inventory file afterwards
-        new_inventory = self._get_current_inventory()
-        self.assertEqual(new_inventory[item_id]['available'], 9)
+        new_inventory = self._get_current_inventory(item_id)
+        self.assertEqual(new_inventory, 9)
 
-        # Check session cart is empty
-        with self.client.session_transaction() as session:
-            self.assertEqual(session['cart'], {})
+        # Check cart is empty
+        cart_count = self._get_cart_count(user_id=1)
+        self.assertEqual(cart_count, 0)
 
         # Check that there are 3 purchases in the purchase history file (there were 2 to start)
-        purchases = self._get_purchase_history()
-        self.assertEqual(len(purchases), 3)
+        purchase_count = self._get_purchase_history()
+        self.assertEqual(purchase_count, 3)
 
     def test_check_out_empty_cart(self):
         """Test that checkout doesn't go through with an empty cart"""
         self.client = self._sign_in()
-        self.client = self._create_session_with_cart()
+        self._create_db_cart()
 
         response = self.client.post("/users/check-out", follow_redirects=True)
         self.assertIn('No items to check out!', response.get_data(as_text=True))
@@ -325,13 +453,11 @@ class RoutesTest(unittest.TestCase):
         body = response.get_data(as_text=True)
         self.assertIn('White T-Shirt', body)
         self.assertIn('Quantity 1', body)
-        self.assertIn('Confirmation number: e3cfe3dd-62ef-4bdd-b307-4d982ba0e2b5', body)
-        self.assertIn('Purchase date: 2026-01-12', body)
+        self.assertIn('Confirmation number: 1', body)
 
         # Confirm the other fake user's purchase is not shown
         self.assertNotIn('Black Jeans', body)
-        self.assertNotIn('Confirmation number: 5d39b0c0-4cee-464d-81fb-fc9787ceefcb', body)
-        self.assertNotIn('Purchase date: 2026-01-11', body)
+        self.assertNotIn('Confirmation number: 2', body)
 
 
 if __name__ == "__main__":

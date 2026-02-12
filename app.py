@@ -1,99 +1,53 @@
-from flask import flash, Flask, redirect, render_template, request, session, url_for
-import os
-from uuid import uuid4
-import yaml
+from flask import flash, Flask, g, redirect, render_template, request, session, url_for
 import bcrypt
-from datetime import datetime
 from functools import wraps
+from toy_ecom.database_persistence import DatabasePersistence
+import secrets
 
 app = Flask(__name__)
-app.secret_key='secret1'
-
-def get_file_path(filename):
-    root = os.path.abspath(os.path.dirname(__file__))
-    if app.config['TESTING']:
-        inventory_path = os.path.join(root, 'tests', filename)
-    else:
-        inventory_path = os.path.join(root, 'toy-ecom', filename)
-    
-    return inventory_path
-
-def load_file(filename):
-    filepath = get_file_path(filename)
-
-    with open(filepath, 'r') as file:
-        return yaml.safe_load(file)
-    
-def update_users_file(username, password):
-    contents = load_file('users.yml')
-    if not contents:
-        contents = {}
-
-    contents[username] = password
-
-    with open(get_file_path('users.yml'), 'w') as file:
-        yaml.safe_dump(contents, file)
-
-def update_inventory_file(items):
-    contents = load_file('inventory.yml')
-    for item, quantity in items.items():
-        contents[item]['available'] -= quantity
-
-    with open(get_file_path('inventory.yml'), 'w') as file:
-        yaml.safe_dump(contents, file)
-
-def update_purchase_history():
-    purchase_id = str(uuid4())
-    contents = load_file('purchases.yml')
-    if not contents:
-        contents = {}
-
-    contents[purchase_id] = {
-        'user': session['username'],
-        'items': session['cart'],
-        'date': datetime.today().strftime("%Y-%m-%d")
-    }
-
-    with open(get_file_path('purchases.yml'), 'w') as file:
-        yaml.safe_dump(contents, file)
-    
-def is_item_in_inventory(item_id):
-    inventory = load_file('inventory.yml')
-    return item_id in inventory
-
-def is_quantity_valid(quantity, item_id):
-    inventory = load_file('inventory.yml')
-    available = inventory[item_id]['available']
-    return quantity > 0 and quantity <= available
-
-def is_user_existing(username):
-    users = load_file('users.yml')
-    if not users:
-        return False
-    return username in users
+app.secret_key=secrets.token_hex(32)
 
 def is_valid_credential(username, password):
-    users = load_file('users.yml')
-    if is_user_existing(username):
-        return bcrypt.checkpw(password.encode('utf-8'), users[username].encode('utf-8'))
+    actual = g.storage.get_user_pwd(username)
+    if actual:
+        return bcrypt.checkpw(password.encode('utf-8'), actual.encode('utf-8'))
     return False
+
+def is_user_signed_in():
+    return 'id' in session
+
+def transform_inventory_format():
+    """Transform format of inventory data for templates"""
+    inventory = g.storage.get_inventory()
+    inventory = [dict(item) for item in inventory]
+
+    inventory_reformat = {
+        item['id']: {key: value for key, value in item.items() if key != 'id'} 
+        for item in inventory
+    }
+
+    return inventory_reformat
 
 @app.context_processor
 def inventory_utilities_processor():
     """Makes the inventory available in all templates"""
     return dict(
-        inventory = load_file('inventory.yml')
+        inventory = transform_inventory_format()
     )
 
 @app.before_request
 def initialize_session():
-    if 'cart' not in session:
+    if not is_user_signed_in() and 'cart' not in session:
         session['cart'] = dict()
+
+@app.before_request
+def load_db():
+    g.storage = DatabasePersistence(app.config['TESTING'] == True)
 
 def sign_in_decorator(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        if 'username' not in session:
+        if 'id' not in session:
             flash("You must be signed in before continuing.", "warning")
             return redirect(url_for('sign_in'))
         return func(*args, **kwargs)
@@ -104,17 +58,17 @@ def sign_in_decorator(func):
 def index():
     return render_template('index.html')
 
-@app.route("/item/<item_id>")
+@app.route("/item/<int:item_id>")
 def view_product(item_id):
-    if not is_item_in_inventory(item_id):
+    if not g.storage.is_item_in_inventory(item_id):
         flash("Item does not exist.", "warning")
         return redirect(url_for("index"))
 
     return render_template('product_page.html', item_id=item_id)
 
-@app.route("/item/<item_id>/add-to-cart", methods=['POST'])
+@app.route("/item/<int:item_id>/add-to-cart", methods=['POST'])
 def add_product_to_cart(item_id):
-    if not is_item_in_inventory(item_id):
+    if not g.storage.is_item_in_inventory(item_id):
         flash("Item does not exist.", "warning")
         return redirect(url_for("index"))
 
@@ -130,37 +84,56 @@ def add_product_to_cart(item_id):
     
     quantity = int(quantity)
 
-    if not is_quantity_valid(quantity, item_id):
+    if not g.storage.is_quantity_valid(quantity, item_id):
         flash("Quantity is invalid for this item.", "warning")
         return render_template('product_page.html', item_id=item_id)
     
     # Add item to cart
-    session['cart'][item_id] = session['cart'].get(item_id, 0) + quantity
+    # With Flask, session data is serialized, meaning the item_id is kept as a string, not int in the session data
+    # So we have to cast it to str to check below
+    if not is_user_signed_in():
+        session['cart'][str(item_id)] = session['cart'].get(str(item_id), 0) + quantity
+        session.modified = True
+    else:
+        g.storage.add_to_cart(session['id'], {item_id: quantity})
     
     flash("Added to cart!", "success")
-    session.modified = True
     return render_template('product_page.html', item_id=item_id)
 
 @app.route('/cart')
 def view_cart():
-    return render_template('cart.html')
+    if not is_user_signed_in():
+        cart = session['cart']
+    else:
+        cart = g.storage.get_user_cart(session['id'])
+        cart = {item['item_id']: item['quantity'] for item in cart}
 
-@app.route('/cart/<item_id>/delete', methods=['POST'])
+    return render_template('cart.html', cart=cart)
+
+@app.route('/cart/<int:item_id>/delete', methods=['POST'])
 def delete_item_from_cart(item_id):
-    if not is_item_in_inventory(item_id):
+    if not g.storage.is_item_in_inventory(item_id):
         flash("Item does not exist.", "warning")
         return redirect(url_for("index"))
     
     # Check that item is actually in the cart
-    if not item_id in session['cart']:
+    # With Flask, session data is serialized, meaning the item_id is kept as a string, not int in the session data
+    # So we have to cast it to str to check below
+    if ((not is_user_signed_in() and str(item_id) not in session['cart']) or
+        (is_user_signed_in() and not g.storage.is_item_in_cart(session['id'], item_id))):
         flash("Item is not in cart.", "warning")
         return redirect(url_for('view_cart'))
 
     # Remove item from cart
-    del session['cart'][item_id]
+    # With Flask, session data is serialized, meaning the item_id is kept as a string, not int in the session data
+    # So we have to cast it to str to check below
+    if not is_user_signed_in():
+        del session['cart'][str(item_id)]
+        session.modified = True
+    else:
+        g.storage.remove_item_from_cart(session['id'], item_id)
 
     flash("Item removed from cart", "success")
-    session.modified = True
     return redirect(url_for('view_cart'))
 
 @app.route('/users/sign-up', methods=['GET', 'POST'])
@@ -175,14 +148,18 @@ def sign_up():
             return render_template('sign_up.html', username=username), 422
 
         # Check to make sure username doesn't overlap with existing
-        if is_user_existing(username):
+        if g.storage.is_existing_user(username):
             flash("Username already exists.", "warning")
             return render_template('sign_up.html', username=username), 422
 
         # Hash the password, store in a yaml, direct to log in page
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
         hashed_password_str = hashed_password.decode('utf-8')
-        update_users_file(username, hashed_password_str)
+        g.storage.update_user_info(username, hashed_password_str)
+
+        # Create a new cart for this new user
+        id = g.storage.get_user_id(username)
+        g.storage.create_cart(id)
 
         flash("Sign up successful! Please log in.", "success")
         return redirect(url_for('sign_in'))
@@ -200,7 +177,13 @@ def sign_in():
             flash('Invalid credentials', 'warning')
             return render_template('sign_in.html', username=username), 422
         
-        session['username'] = username
+        session['id'] = g.storage.get_user_id(username)
+
+        # Move any cart items in the session to the database
+        if 'cart' in session and session['cart']:
+            g.storage.add_to_cart(session['id'], session['cart'])
+            del session['cart']
+
         flash('Welcome back!', "success")
         return redirect(url_for('index'))
 
@@ -208,8 +191,8 @@ def sign_in():
 
 @app.route("/users/sign-out", methods=['POST'])
 def sign_out():
-    if 'username' in session:
-        del session['username']
+    if 'id' in session:
+        del session['id']
     
     flash("You have been signed out.", "success")
     return redirect(url_for('index'))
@@ -218,33 +201,47 @@ def sign_out():
 @sign_in_decorator
 def check_out_cart():
     # Make sure there are actually items in the cart, otherwise nothing to check out
-    if not session['cart']:
+    cart = g.storage.get_user_cart(session['id'])
+
+    if not cart:
         flash("No items to check out!", "warning")
         return redirect(url_for("view_cart"))
     
-    # Update inventory file
-    update_inventory_file(session['cart'])
+    # Update inventory
+    g.storage.update_inventory(session['id'])
 
     # Add purchase to a history file
-    update_purchase_history()
+    g.storage.update_orders(session['id'])
 
     # Clear cart
-    session['cart'] = dict()
+    g.storage.clear_cart(session['id'])
 
     flash("Thank you for your purchase!", "success")
-    session.modified = True
     return redirect(url_for('user_history'))
 
 @app.route("/users/history")
 @sign_in_decorator
 def user_history():
-    all_purchases = load_file('purchases.yml')
-    if not all_purchases:
-        all_purchases = {}
-    user_purchases = {key: value for key, value in all_purchases.items()
-                                 if value['user'] == session['username']}
+    user_purchases = [dict(purchase) for purchase in g.storage.get_user_history(session['id'])]
 
-    return render_template('user_history.html', purchases=user_purchases)
+    # Group items together by order_id for easier implementation in template
+    user_purchases_grouped = dict()
+
+    for purchase in user_purchases:
+        order_id = purchase['order_id']
+
+        if order_id in user_purchases_grouped:
+            # Add current purchase item to group
+            items = user_purchases_grouped[order_id]['items']
+            items[purchase['item_id']] = purchase['quantity']
+        else:
+            data = dict()
+            data['date'] = purchase['purchase_date']
+            data['items'] = {purchase['item_id']: purchase['quantity']}
+
+            user_purchases_grouped[order_id] = data
+
+    return render_template('user_history.html', purchases=user_purchases_grouped)
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)

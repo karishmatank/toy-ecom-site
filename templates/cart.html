@@ -3,11 +3,11 @@
 {% block content %}
   <h1>Your Cart:</h1>
   <ul>
-    {% if session['cart'] %}
-      {% for item_id in session['cart'] %}
+    {% if cart %}
+      {% for item_id in cart %}
         <li>
-          <a href="{{ url_for('view_product', item_id=item_id)}}">{{ inventory[item_id]['product_name'] }}</a>
-          <p class="inline margin-to-left">Quantity {{ session['cart'][item_id] }}</p>
+          <a href="{{ url_for('view_product', item_id=item_id)}}">{{ inventory[item_id|int]['product_name'] }}</a>
+          <p class="inline margin-to-left">Quantity {{ cart[item_id] }}</p>
           <form class="inline margin-to-left" method="post" action="{{ url_for('delete_item_from_cart', item_id=item_id) }}">
             <button type="submit">Clear Item from Cart</button>
           </form>
@@ -17,7 +17,7 @@
       <p>You have no items in your cart!</p>
     {% endif %}
   </ul>
-  {% if session['cart'] %}
+  {% if cart %}
     <form method="post", action="{{ url_for('check_out_cart') }}">
       <button type="submit">Check Out</button>
     </form>
@@ -26,7 +26,7 @@
 
 {% block additional_links %}
   <a class="block" href="{{ url_for('index') }}">View Selection</a>
-  {% if not session['username'] %}
+  {% if not session['id'] %}
     <a class="block" href="{{ url_for('sign_up') }}">Sign Up for a Free Account</a>
     <a class="block" href="{{ url_for('sign_in') }}">Sign In</a>
   {% else %}

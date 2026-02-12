@@ -14,7 +14,7 @@
 
 {% block additional_links %}
   <a class="block" href="{{ url_for('view_cart') }}">View Your Cart</a>
-  {% if not session['username'] %}
+  {% if not session['id'] %}
     <a class="block" href="{{ url_for('sign_up') }}">Sign Up for a Free Account</a>
     <a class="block" href="{{ url_for('sign_in') }}">Sign In</a>
   {% else %}
